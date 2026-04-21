@@ -1,0 +1,851 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
+import { 
+  Calendar as CalendarIcon, ShieldCheck, Plus, Trash2, Check, X, 
+  UserPlus, LogOut, Leaf, Eye, EyeOff, LogIn, Image as ImageIcon, 
+  CalendarPlus, Share2, ClipboardCopy, Send, MousePointerClick
+} from 'lucide-react';
+
+// ==========================================
+// 1. Firebase Initialization
+// ==========================================
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// ==========================================
+// 常數與選項設定
+// ==========================================
+const ALLIANCE_OPTIONS = ['建豪阿詩', '君立惠萍', '殿順宜玲', 'Favor', '顏值爆表', '心不老', 'Revival'];
+const SHIFT_OPTIONS = ['導覽人員 (需求 1位)', '招待人員 10:00-13:30 (需求 5-6位)', '招待人員 13:30-17:00 (需求 5-6位)'];
+
+// ==========================================
+// 2. 主應用程式 Main App
+// ==========================================
+export default function App() {
+  const [fbUser, setFbUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('home'); // home, admin, dashboard, login
+  const [registrations, setRegistrations] = useState([]);
+  const [usersInfo, setUsersInfo] = useState([]);
+  
+  // 登入狀態管理
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loggedInUser, setLoggedInUser] = useState(null);
+
+  // 初始化 Firebase Auth
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth error:", error);
+      }
+    };
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, (u) => setFbUser(u));
+    return () => unsubscribe();
+  }, []);
+
+  // 取得全域報名資料與使用者資料
+  useEffect(() => {
+    if (!fbUser) return;
+
+    const regsRef = collection(db, 'artifacts', appId, 'public', 'data', 'volunteer_registrations');
+    const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'volunteer_users');
+    
+    const unsubRegs = onSnapshot(regsRef, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      data.sort((a, b) => b.createdAt - a.createdAt);
+      setRegistrations(data);
+    });
+
+    const unsubUsers = onSnapshot(usersRef, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUsersInfo(data);
+    });
+
+    return () => { unsubRegs(); unsubUsers(); };
+  }, [fbUser]);
+
+  return (
+    <div className="min-h-screen bg-[#F4F1EA] text-[#2C362B] font-sans selection:bg-[#A3B18A] selection:text-[#1B2A22] text-lg">
+      {/* 導覽列 (後台管理移至右上角) */}
+      <header className="bg-[#1B2A22] text-[#EAE6D9] shadow-lg sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center gap-4">
+          
+          {/* 左側：Logo 與 主要導覽按鈕 */}
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-8 w-full sm:w-auto">
+            <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2 sm:gap-3 tracking-wide cursor-pointer" onClick={() => setActiveTab('home')}>
+              <Leaf className="w-6 h-6 sm:w-8 sm:h-8 text-[#A3B18A]" />
+              <span className="hidden md:inline">嶺頭志工服務網</span>
+              <span className="md:hidden">嶺頭志工</span>
+            </h1>
+            <nav className="flex gap-2 bg-[#2C3E33] p-1.5 rounded-xl w-full sm:w-auto justify-center">
+              <NavBtn active={activeTab === 'home'} onClick={() => setActiveTab('home')} icon={<CalendarIcon className="w-4 h-4 sm:w-5 sm:h-5"/>} text="首頁登記" />
+              
+              {loggedInUser ? (
+                <NavBtn active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<UserPlus className="w-4 h-4 sm:w-5 sm:h-5"/>} text="我的排班" />
+              ) : (
+                <NavBtn active={activeTab === 'login'} onClick={() => setActiveTab('login')} icon={<LogIn className="w-4 h-4 sm:w-5 sm:h-5"/>} text="志工登入" />
+              )}
+            </nav>
+          </div>
+
+          {/* 右上角：後台管理入口 */}
+          <button 
+            onClick={() => setActiveTab('admin')} 
+            className={`hidden sm:flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm font-bold border border-transparent
+              ${activeTab === 'admin' ? 'text-white border-[#A3B18A] bg-[#2C3E33]' : 'text-[#A3B18A] hover:text-white hover:bg-[#2C3E33]'}`}
+          >
+            <ShieldCheck className="w-5 h-5"/>
+            後台管理
+          </button>
+          
+          {/* 手機版後台圖示 */}
+          <button 
+            onClick={() => setActiveTab('admin')} 
+            className={`sm:hidden p-2 rounded-lg ${activeTab === 'admin' ? 'text-white bg-[#2C3E33]' : 'text-[#A3B18A]'}`}
+          >
+            <ShieldCheck className="w-6 h-6"/>
+          </button>
+        </div>
+      </header>
+
+      {/* 主要內容區 */}
+      <main className="max-w-7xl mx-auto px-2 sm:px-4 py-8 sm:py-10">
+        {activeTab === 'home' && <HomeView registrations={registrations} db={db} appId={appId} usersInfo={usersInfo} setActiveTab={setActiveTab} setLoggedInUser={setLoggedInUser} />}
+        {activeTab === 'login' && <LoginView usersInfo={usersInfo} setLoggedInUser={setLoggedInUser} setActiveTab={setActiveTab} />}
+        {activeTab === 'dashboard' && <DashboardView user={loggedInUser} registrations={registrations} db={db} appId={appId} setLoggedInUser={setLoggedInUser} setActiveTab={setActiveTab} />}
+        {activeTab === 'admin' && <AdminView registrations={registrations} db={db} appId={appId} isAdmin={isAdmin} setIsAdmin={setIsAdmin} usersInfo={usersInfo} />}
+      </main>
+    </div>
+  );
+}
+
+// 導覽列按鈕元件
+function NavBtn({ active, onClick, icon, text }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`px-4 sm:px-5 py-2 sm:py-2.5 rounded-lg whitespace-nowrap transition-all duration-300 flex items-center gap-2 font-bold text-sm sm:text-base
+        ${active ? 'bg-[#EAE6D9] text-[#1B2A22] shadow-md' : 'text-[#C2C9BA] hover:text-white hover:bg-[#3A4D42]'}`}
+    >
+      {icon} {text}
+    </button>
+  );
+}
+
+// ==========================================
+// 3. 首頁 (月曆與報名表)
+// ==========================================
+function HomeView({ registrations, db, appId, usersInfo, setActiveTab, setLoggedInUser }) {
+  const formRef = useRef(null);
+  const [selectedDate, setSelectedDate] = useState('');
+
+  const handleDateSelect = (dateStr) => {
+    setSelectedDate(dateStr);
+    // 平滑滾動到報名表單
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  return (
+    <div className="space-y-16">
+      {/* 歡迎與月曆區塊 */}
+      <section className="space-y-8">
+        <div className="text-center space-y-4">
+          <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#2A3C2F] flex justify-center items-center gap-3">
+            本月排班動態
+          </h2>
+          <p className="text-[#5E7459] text-lg sm:text-xl max-w-3xl mx-auto leading-relaxed px-4">
+            點擊下方月曆上有空缺的日期，即可快速填寫報名登記表！
+          </p>
+        </div>
+
+        {/* 月曆元件 */}
+        <CalendarWidget registrations={registrations} onDateSelect={handleDateSelect} />
+
+      </section>
+
+      <div className="border-t-2 border-[#D5D0C5] my-12" ref={formRef}></div>
+
+      {/* 報名表單 */}
+      <section>
+        <RegisterForm db={db} appId={appId} usersInfo={usersInfo} setActiveTab={setActiveTab} setLoggedInUser={setLoggedInUser} prefillDate={selectedDate} />
+      </section>
+    </div>
+  );
+}
+
+// 月曆元件
+function CalendarWidget({ registrations, onDateSelect }) {
+  const today = new Date();
+  const [currentDate, setCurrentDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayOfWeek = new Date(year, month, 1).getDay();
+
+  const approvedRegs = registrations.filter(r => r.status === 'approved');
+  const dayStats = {}; 
+  
+  approvedRegs.forEach(reg => {
+    reg.shifts.forEach(shift => {
+      if (!dayStats[shift.date]) {
+        dayStats[shift.date] = { '導覽人員 (需求 1位)': 0, '招待人員 10:00-13:30 (需求 5-6位)': 0, '招待人員 13:30-17:00 (需求 5-6位)': 0 };
+      }
+      if (dayStats[shift.date][shift.type] !== undefined) {
+        dayStats[shift.date][shift.type] += reg.volunteers.length;
+      }
+    });
+  });
+
+  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
+  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
+
+  const renderDays = () => {
+    const blanks = Array(firstDayOfWeek).fill(null);
+    const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+    const allCells = [...blanks, ...days];
+
+    return allCells.map((day, i) => {
+      if (!day) return <div key={`blank-${i}`} className="bg-transparent border border-transparent p-1 sm:p-4 min-h-[80px] sm:min-h-[120px]"></div>;
+      
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const stats = dayStats[dateStr] || { '導覽人員 (需求 1位)': 0, '招待人員 10:00-13:30 (需求 5-6位)': 0, '招待人員 13:30-17:00 (需求 5-6位)': 0 };
+      
+      return (
+        <div 
+          key={dateStr} 
+          onClick={() => onDateSelect(dateStr)}
+          className="bg-white border border-[#E5E0D8] p-1.5 sm:p-3 rounded-lg shadow-sm hover:shadow-md hover:border-[#4A6451] hover:-translate-y-1 transition-all cursor-pointer min-h-[100px] sm:min-h-[130px] flex flex-col group relative"
+          title={`點擊登記 ${dateStr} 排班`}
+        >
+          <div className="font-extrabold text-base sm:text-xl text-[#2A3C2F] mb-1.5">{day}</div>
+          <div className="flex flex-col gap-1 flex-1 justify-end">
+            <StatusBadge label="導覽" max={1} current={stats['導覽人員 (需求 1位)']} />
+            <StatusBadge label="早班" max={6} current={stats['招待人員 10:00-13:30 (需求 5-6位)']} />
+            <StatusBadge label="午班" max={6} current={stats['招待人員 13:30-17:00 (需求 5-6位)']} />
+          </div>
+          {/* Hover 提示點擊遮罩 */}
+          <div className="absolute inset-0 bg-[#A3B18A] opacity-0 group-hover:opacity-10 rounded-lg transition-opacity pointer-events-none"></div>
+        </div>
+      );
+    });
+  };
+
+  return (
+    <div className="bg-[#FAF9F6] p-4 sm:p-8 rounded-3xl shadow-sm border border-[#E5E0D8] max-w-5xl mx-auto relative">
+      <div className="flex justify-between items-center mb-6 sm:mb-8">
+        <button onClick={prevMonth} className="p-2 sm:p-3 bg-white rounded-full shadow hover:bg-[#EAE6D9] font-bold text-xl text-[#4A6451]">&lt;</button>
+        <h3 className="text-2xl sm:text-3xl font-extrabold text-[#2A3C2F]">
+          {year} 年 {month + 1} 月
+        </h3>
+        <button onClick={nextMonth} className="p-2 sm:p-3 bg-white rounded-full shadow hover:bg-[#EAE6D9] font-bold text-xl text-[#4A6451]">&gt;</button>
+      </div>
+      
+      <div className="grid grid-cols-7 gap-1 sm:gap-4 mb-2 sm:mb-4 text-center font-bold text-sm sm:text-lg text-[#5E7459]">
+        <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
+      </div>
+      
+      <div className="grid grid-cols-7 gap-1 sm:gap-3">
+        {renderDays()}
+      </div>
+      
+      <div className="mt-8 flex flex-wrap justify-center gap-4 sm:gap-6 text-sm font-medium text-[#5E7459]">
+        <div className="flex items-center gap-2"><span className="w-4 h-4 rounded-full bg-[#E5E0D8]"></span> 尚有大量缺額</div>
+        <div className="flex items-center gap-2"><span className="w-4 h-4 rounded-full bg-[#A3B18A]"></span> 快滿了</div>
+        <div className="flex items-center gap-2"><span className="w-4 h-4 rounded-full bg-[#D4A373]"></span> 已額滿</div>
+      </div>
+
+      <div className="mt-6 text-center text-[#4A6451] font-bold text-base sm:text-lg animate-pulse flex items-center justify-center gap-2">
+        <MousePointerClick className="w-5 h-5"/> 點擊上方月曆日期，可直接快速帶入登記表！
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ label, max, current }) {
+  let bgColor = "bg-[#E5E0D8] text-[#5C6656]"; // 缺額多
+  if (current >= max) bgColor = "bg-[#D4A373] text-white"; // 額滿
+  else if (current > 0) bgColor = "bg-[#A3B18A] text-white"; // 有人報名
+
+  return (
+    <div className={`px-1 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold flex justify-between items-center ${bgColor}`}>
+      <span className="hidden sm:inline truncate mr-1">{label}</span>
+      <span className="sm:hidden">{label[0]}</span> {/* 手機版自動縮寫：導, 早, 午 */}
+      <span className="shrink-0 leading-none">{current}/{max}</span>
+    </div>
+  );
+}
+
+// 報名表單
+function RegisterForm({ db, appId, usersInfo, setActiveTab, setLoggedInUser, prefillDate }) {
+  const [userInfo, setUserInfo] = useState({
+    name: '', phone: '', email: '', lineId: '',
+    churchType: '平鎮浸信會', churchOther: '', alliance: ALLIANCE_OPTIONS[0], group: '',
+    username: '', password: '', confirmPassword: ''
+  });
+  
+  const [showPwd, setShowPwd] = useState(false);
+  const [shifts, setShifts] = useState([{ date: '', type: SHIFT_OPTIONS[0], companion: '' }]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // 監聽來自月曆點擊的日期，自動帶入表單第一欄
+  useEffect(() => {
+    if (prefillDate) {
+      setShifts(prev => {
+        const newShifts = [...prev];
+        newShifts[0].date = prefillDate;
+        return newShifts;
+      });
+    }
+  }, [prefillDate]);
+
+  const handleUserChange = (f, v) => setUserInfo({...userInfo, [f]: v});
+  
+  const handleAddShift = () => setShifts([...shifts, { date: '', type: SHIFT_OPTIONS[0], companion: '' }]);
+  const handleRemoveShift = (i) => setShifts(shifts.filter((_, idx) => idx !== i));
+  const handleShiftChange = (i, f, v) => {
+    const newS = [...shifts];
+    newS[i][f] = v;
+    setShifts(newS);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (userInfo.password !== userInfo.confirmPassword) {
+      alert("❌ 密碼與再次確認密碼不相符！"); return;
+    }
+    
+    if (usersInfo.some(u => u.username === userInfo.username)) {
+      alert("❌ 此使用者名稱已被使用，請更換一個。"); return;
+    }
+
+    setIsSubmitting(true);
+    
+    try {
+      const finalChurch = userInfo.churchType === '其他' ? userInfo.churchOther : userInfo.churchType;
+      
+      const userData = {
+        username: userInfo.username,
+        password: userInfo.password, 
+        name: userInfo.name,
+        phone: userInfo.phone,
+        email: userInfo.email,
+        lineId: userInfo.lineId,
+        church: finalChurch,
+        alliance: userInfo.alliance,
+        group: userInfo.group,
+        createdAt: Date.now()
+      };
+      
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'volunteer_users'), userData);
+
+      const payload = {
+        username: userInfo.username,
+        mainName: userInfo.name,
+        volunteers: [{ name: userInfo.name, phone: userInfo.phone }],
+        shifts: shifts.map(s => {
+          const comps = s.companion.split(',').map(c => c.trim()).filter(c => c);
+          return { date: s.date, type: s.type, extraVolunteers: comps };
+        }),
+        status: 'pending',
+        createdAt: Date.now()
+      };
+      
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'volunteer_registrations'), payload);
+      
+      alert('✅ 報名與帳號建立成功！已自動為您登入，請等待管理員審核。');
+      
+      setLoggedInUser(userData);
+      setActiveTab('dashboard');
+
+    } catch (err) {
+      console.error(err);
+      alert('❌ 送出失敗，請稍後再試。');
+    }
+    setIsSubmitting(false);
+  };
+
+  return (
+    <div className="bg-white p-6 sm:p-12 rounded-3xl shadow-lg border-2 border-[#E5E0D8] max-w-4xl mx-auto">
+      <div className="mb-10 text-center">
+        <h2 className="text-3xl md:text-4xl font-extrabold text-[#2A3C2F] mb-3">報名與帳號建立</h2>
+        <p className="text-[#7A8675] text-lg">免繁瑣註冊，填寫完畢系統將自動為您建立專屬帳號。</p>
+      </div>
+      
+      <form onSubmit={handleSubmit} className="space-y-12">
+        {/* 區塊 1: 個人資料 */}
+        <div className="space-y-6 bg-[#FAF9F6] p-5 sm:p-6 rounded-2xl border border-[#E5E0D8]">
+          <h3 className="font-extrabold text-xl sm:text-2xl text-[#3A4D42] border-b-2 border-[#D5D0C5] pb-3">1. 聯絡人基本資料</h3>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Input label="全名" value={userInfo.name} onChange={v => handleUserChange('name', v)} required />
+            <Input label="聯絡電話" type="tel" value={userInfo.phone} onChange={v => handleUserChange('phone', v)} required />
+            <Input label="Email" type="email" value={userInfo.email} onChange={v => handleUserChange('email', v)} required />
+            <Input label="LINE ID" value={userInfo.lineId} onChange={v => handleUserChange('lineId', v)} required />
+            
+            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div>
+                <label className="block text-lg font-bold text-[#5C6656] mb-2">教會 <span className="text-red-500">*</span></label>
+                <select 
+                  value={userInfo.churchType} onChange={e => handleUserChange('churchType', e.target.value)}
+                  className="w-full px-4 py-3 bg-white border-2 border-[#D5D0C5] rounded-xl focus:border-[#4A6451] outline-none font-medium"
+                >
+                  <option value="平鎮浸信會">平鎮浸信會</option>
+                  <option value="其他">其他</option>
+                </select>
+              </div>
+              {userInfo.churchType === '其他' && (
+                <Input label="請填寫教會名稱" value={userInfo.churchOther} onChange={v => handleUserChange('churchOther', v)} required />
+              )}
+              
+              <div>
+                <label className="block text-lg font-bold text-[#5C6656] mb-2">聯盟 <span className="text-red-500">*</span></label>
+                <select 
+                  value={userInfo.alliance} onChange={e => handleUserChange('alliance', e.target.value)}
+                  className="w-full px-4 py-3 bg-white border-2 border-[#D5D0C5] rounded-xl focus:border-[#4A6451] outline-none font-medium"
+                >
+                  {ALLIANCE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+              
+              <Input label="小組 (手動填寫)" value={userInfo.group} onChange={v => handleUserChange('group', v)} required />
+            </div>
+          </div>
+        </div>
+
+        {/* 區塊 2: 帳號設定 */}
+        <div className="space-y-6 bg-[#F0F7F2] p-5 sm:p-6 rounded-2xl border border-[#C3DCCB]">
+          <h3 className="font-extrabold text-xl sm:text-2xl text-[#2C4A3B] border-b-2 border-[#C3DCCB] pb-3">2. 設定專屬帳號密碼</h3>
+          <p className="text-[#5E7459] font-medium text-sm sm:text-base">設定後，未來可直接登入查詢與修改排班。</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <Input label="自訂使用者名稱" value={userInfo.username} onChange={v => handleUserChange('username', v)} required placeholder="例如: yourname123" />
+            <div className="relative">
+              <Input label="設定密碼" type={showPwd ? 'text' : 'password'} value={userInfo.password} onChange={v => handleUserChange('password', v)} required />
+              <button type="button" onClick={() => setShowPwd(!showPwd)} className="absolute right-4 top-11 text-gray-500">
+                {showPwd ? <EyeOff className="w-6 h-6"/> : <Eye className="w-6 h-6"/>}
+              </button>
+            </div>
+            <Input label="再次輸入密碼" type={showPwd ? 'text' : 'password'} value={userInfo.confirmPassword} onChange={v => handleUserChange('confirmPassword', v)} required />
+          </div>
+        </div>
+
+        {/* 區塊 3: 排班時間 */}
+        <div className="space-y-6 bg-[#FAF9F6] p-5 sm:p-6 rounded-2xl border border-[#E5E0D8]">
+          <h3 className="font-extrabold text-xl sm:text-2xl text-[#3A4D42] border-b-2 border-[#D5D0C5] pb-3 flex justify-between items-center">
+            3. 排班時間登記
+          </h3>
+          
+          <div className="space-y-4">
+            {shifts.map((shift, index) => (
+              <div key={index} className="flex flex-col md:flex-row gap-4 items-start bg-white p-5 rounded-xl border border-[#D5D0C5] relative">
+                {shifts.length > 1 && (
+                  <button type="button" onClick={() => handleRemoveShift(index)} className="absolute top-3 right-3 text-red-400 hover:text-red-600">
+                    <Trash2 className="w-6 h-6" />
+                  </button>
+                )}
+                <div className="flex-1 w-full">
+                  <Input 
+                    label="選擇日期" 
+                    type="date" 
+                    value={shift.date} 
+                    onChange={v => handleShiftChange(index, 'date', v)} 
+                    required 
+                  />
+                  {index === 0 && prefillDate === shift.date && (
+                    <span className="text-xs text-[#A3B18A] font-bold mt-1 inline-block">✓ 已由月曆自動帶入</span>
+                  )}
+                </div>
+                <div className="flex-1 w-full">
+                  <label className="block text-lg font-bold text-[#5C6656] mb-2">服事崗位 <span className="text-red-500">*</span></label>
+                  <select 
+                    value={shift.type} onChange={e => handleShiftChange(index, 'type', e.target.value)}
+                    className="w-full px-4 py-3 bg-white border-2 border-[#D5D0C5] rounded-xl focus:border-[#4A6451] outline-none font-medium text-lg"
+                  >
+                    {SHIFT_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </div>
+                <div className="flex-1 w-full">
+                  <Input label="同行志工姓名(選填, 以逗號分隔)" value={shift.companion} onChange={v => handleShiftChange(index, 'companion', v)} placeholder="例如: 王小華, 李大明" />
+                </div>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={handleAddShift} className="flex items-center gap-2 text-[#4A6451] hover:text-[#1B2A22] text-lg font-bold bg-[#EFECE5] hover:bg-[#E5E0D8] px-6 py-3 rounded-xl transition-colors">
+            <Plus className="w-6 h-6" /> 增加另一天排班
+          </button>
+        </div>
+
+        <button type="submit" disabled={isSubmitting} className="w-full bg-[#1B2A22] text-[#EAE6D9] font-extrabold text-2xl py-5 px-4 rounded-2xl hover:bg-[#2C3E33] transition-all shadow-xl hover:shadow-2xl flex justify-center items-center gap-3">
+          {isSubmitting ? '送出中...' : '送出並建立資料'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function Input({ label, type = 'text', value, onChange, required, placeholder }) {
+  return (
+    <div>
+      <label className="block text-lg font-bold text-[#5C6656] mb-2">{label} {required && <span className="text-red-500">*</span>}</label>
+      <input 
+        type={type} required={required} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        className="w-full px-4 py-3 bg-white border-2 border-[#D5D0C5] rounded-xl focus:border-[#4A6451] outline-none transition-all font-medium text-lg text-[#2A3C2F]"
+      />
+    </div>
+  );
+}
+
+// ==========================================
+// 4. 志工登入頁面
+// ==========================================
+function LoginView({ usersInfo, setLoggedInUser, setActiveTab }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    const user = usersInfo.find(u => u.username === username && u.password === password);
+    if (user) {
+      setLoggedInUser(user);
+      setActiveTab('dashboard');
+    } else {
+      alert("帳號或密碼錯誤！");
+    }
+  };
+
+  return (
+    <div className="max-w-md mx-auto bg-white p-10 rounded-3xl shadow-lg border-2 border-[#E5E0D8] mt-10">
+      <div className="text-center mb-8">
+        <UserPlus className="w-16 h-16 text-[#4A6451] mx-auto mb-4" />
+        <h2 className="text-3xl font-extrabold text-[#2A3C2F]">志工登入</h2>
+      </div>
+      <form onSubmit={handleLogin} className="space-y-6">
+        <Input label="使用者名稱" value={username} onChange={setUsername} required />
+        <div className="relative">
+          <Input label="密碼" type={showPwd ? 'text' : 'password'} value={password} onChange={setPassword} required />
+          <button type="button" onClick={() => setShowPwd(!showPwd)} className="absolute right-4 top-11 text-gray-500">
+            {showPwd ? <EyeOff className="w-6 h-6"/> : <Eye className="w-6 h-6"/>}
+          </button>
+        </div>
+        <button type="submit" className="w-full bg-[#4A6451] text-white font-bold text-xl py-4 rounded-xl hover:bg-[#3A4D42] shadow-md">
+          登入
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// ==========================================
+// 5. 志工專屬後台 (Dashboard)
+// ==========================================
+function DashboardView({ user, registrations, db, appId, setLoggedInUser, setActiveTab }) {
+  const canvasRef = useRef(null);
+
+  const myRegs = registrations.filter(r => r.username === user.username);
+
+  const handleLogout = () => {
+    setLoggedInUser(null);
+    setActiveTab('home');
+  };
+
+  const generateImage = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    
+    ctx.fillStyle = '#1B2A22';
+    ctx.fillRect(0, 0, 800, 1000);
+    
+    ctx.fillStyle = '#4A6451';
+    ctx.beginPath();
+    ctx.arc(800, 0, 300, 0, 2 * Math.PI);
+    ctx.fill();
+
+    ctx.fillStyle = '#EAE6D9';
+    ctx.font = 'bold 48px sans-serif';
+    ctx.fillText('嶺頭志工 排班確認卡', 50, 100);
+    
+    ctx.fillStyle = '#A3B18A';
+    ctx.font = 'bold 36px sans-serif';
+    ctx.fillText(`志工：${user.name}`, 50, 180);
+
+    ctx.fillStyle = '#F4F1EA';
+    ctx.font = '28px sans-serif';
+    let y = 260;
+    
+    myRegs.filter(r => r.status === 'approved').forEach(reg => {
+      reg.shifts.forEach(shift => {
+        ctx.fillText(`🗓️ ${shift.date} | ${shift.type}`, 50, y);
+        if (shift.extraVolunteers && shift.extraVolunteers.length > 0) {
+          y += 40;
+          ctx.fillStyle = '#C2C9BA';
+          ctx.font = '24px sans-serif';
+          ctx.fillText(`   同行: ${shift.extraVolunteers.join(', ')}`, 50, y);
+          ctx.fillStyle = '#F4F1EA';
+          ctx.font = '28px sans-serif';
+        }
+        y += 60;
+      });
+    });
+
+    if (y === 260) {
+      ctx.fillText('尚無已核准的排班。', 50, y);
+    }
+
+    ctx.fillStyle = '#7A8675';
+    ctx.font = 'italic 24px sans-serif';
+    ctx.fillText('「感謝您委身服事，願神大大賜福您！」', 50, 900);
+
+    const link = document.createElement('a');
+    link.download = '嶺頭志工排班.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
+  const getGCalLink = (shift) => {
+    const dateStr = shift.date.replace(/-/g, '');
+    let startTime = '100000';
+    let endTime = '170000';
+    if(shift.type.includes('10:00')) endTime = '133000';
+    if(shift.type.includes('13:30')) { startTime = '133000'; endTime = '170000'; }
+
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent('嶺頭志工服事 - ' + shift.type)}&dates=${dateStr}T${startTime}Z/${dateStr}T${endTime}Z&details=${encodeURIComponent('感謝您的服事！')}`;
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-8">
+      <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-sm border border-[#E5E0D8] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 className="text-2xl sm:text-3xl font-bold text-[#2A3C2F]">歡迎，{user.name}</h2>
+          <p className="text-[#5E7459] text-base sm:text-lg mt-2">{user.church} | {user.alliance} | {user.group}</p>
+        </div>
+        <button onClick={handleLogout} className="w-full sm:w-auto flex justify-center items-center gap-2 text-[#8C3A3A] bg-[#FDF6F5] hover:bg-[#F9E8E6] px-6 py-3 rounded-xl font-bold text-lg">
+          <LogOut className="w-5 h-5" /> 登出
+        </button>
+      </div>
+
+      <div className="bg-[#1B2A22] text-[#EAE6D9] p-6 sm:p-8 rounded-3xl shadow-lg relative overflow-hidden">
+        <div className="absolute top-0 right-0 opacity-10 pointer-events-none">
+          <Leaf className="w-64 h-64 -mt-10 -mr-10" />
+        </div>
+        <div className="relative z-10 flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+          <h3 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+            <CalendarIcon className="w-6 h-6 text-[#A3B18A]" /> 我的排班紀錄
+          </h3>
+          <button onClick={generateImage} className="w-full sm:w-auto bg-[#4A6451] hover:bg-[#5E7459] text-white px-5 py-3 rounded-xl font-bold flex justify-center items-center gap-2">
+            <ImageIcon className="w-5 h-5" /> 下載排班圖卡
+          </button>
+        </div>
+
+        <div className="space-y-4 relative z-10">
+          {myRegs.length === 0 && <p className="text-[#A3B18A] text-lg">目前尚無排班紀錄。</p>}
+          {myRegs.map(reg => (
+            <div key={reg.id} className="bg-[#2C3E33] p-4 sm:p-5 rounded-xl border border-[#3A4D42]">
+              <div className="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center mb-3 gap-2">
+                <span className={`px-3 py-1 rounded-full text-sm font-bold ${reg.status === 'approved' ? 'bg-[#A3B18A] text-[#1B2A22]' : reg.status === 'pending' ? 'bg-[#D4A373] text-white' : 'bg-red-900 text-white'}`}>
+                  狀態: {reg.status === 'approved' ? '已核准' : reg.status === 'pending' ? '審核中' : '已退回'}
+                </span>
+                <span className="text-[#7A8675] text-sm">送出時間：{new Date(reg.createdAt).toLocaleDateString()}</span>
+              </div>
+              <ul className="space-y-3">
+                {reg.shifts.map((s, i) => (
+                  <li key={i} className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#1B2A22] p-4 rounded-lg">
+                    <div>
+                      <div className="text-lg sm:text-xl font-bold text-white flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                        {s.date} <span className="text-[#A3B18A] text-base sm:text-lg">{s.type}</span>
+                      </div>
+                      {s.extraVolunteers && s.extraVolunteers.length > 0 && (
+                        <div className="text-[#C2C9BA] mt-1 text-sm sm:text-base">同行人員: {s.extraVolunteers.join(', ')}</div>
+                      )}
+                    </div>
+                    {reg.status === 'approved' && (
+                      <a href={getGCalLink(s)} target="_blank" rel="noreferrer" className="flex justify-center items-center gap-2 text-[#EAE6D9] hover:text-[#A3B18A] bg-[#3A4D42] px-4 py-3 rounded-lg font-bold text-sm whitespace-nowrap">
+                        <CalendarPlus className="w-4 h-4" /> 加入 Google 行事曆
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+      
+      <canvas ref={canvasRef} width="800" height="1000" className="hidden"></canvas>
+    </div>
+  );
+}
+
+// ==========================================
+// 6. 管理員後台
+// ==========================================
+function AdminView({ registrations, db, appId, isAdmin, setIsAdmin, usersInfo }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    if (username === 'Lingtou' && password === 'lingtou1952') {
+      setIsAdmin(true);
+    } else {
+      alert('帳號或密碼錯誤');
+    }
+  };
+
+  const updateStatus = async (id, newStatus) => {
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'volunteer_registrations', id), { status: newStatus });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  if (!isAdmin) {
+    return (
+      <div className="max-w-md mx-auto bg-white p-8 sm:p-10 rounded-3xl shadow-lg border-2 border-[#E5E0D8] mt-10">
+        <div className="text-center mb-8">
+          <ShieldCheck className="w-16 h-16 text-[#4A6451] mx-auto mb-4" />
+          <h2 className="text-3xl font-extrabold text-[#2A3C2F]">管理員登入</h2>
+        </div>
+        <form onSubmit={handleLogin} className="space-y-6">
+          <Input label="管理員帳號" value={username} onChange={setUsername} required />
+          <div className="relative">
+            <Input label="密碼" type={showPwd ? 'text' : 'password'} value={password} onChange={setPassword} required />
+            <button type="button" onClick={() => setShowPwd(!showPwd)} className="absolute right-4 top-11 text-gray-500">
+              {showPwd ? <EyeOff className="w-6 h-6"/> : <Eye className="w-6 h-6"/>}
+            </button>
+          </div>
+          <button type="submit" className="w-full bg-[#1B2A22] text-white font-bold text-xl py-4 rounded-xl hover:bg-[#2C3E33] shadow-md">
+            登入管理後台
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  const pendingRegs = registrations.filter(r => r.status === 'pending');
+  const approvedRegs = registrations.filter(r => r.status === 'approved');
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-10">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[#1B2A22] text-[#EAE6D9] p-6 rounded-2xl shadow-lg">
+        <h2 className="text-2xl sm:text-3xl font-bold flex items-center gap-3"><ShieldCheck className="w-8 h-8 text-[#A3B18A]"/> 審核控制台</h2>
+        <button onClick={() => setIsAdmin(false)} className="flex justify-center w-full sm:w-auto items-center gap-2 bg-[#2C3E33] hover:bg-[#3A4D42] px-5 py-2.5 rounded-xl font-bold">
+          <LogOut className="w-5 h-5"/> 登出
+        </button>
+      </div>
+
+      <section className="bg-white p-6 sm:p-8 rounded-3xl shadow-sm border-t-8 border-[#D4A373]">
+        <h3 className="text-2xl font-bold text-[#8C603A] mb-6 flex items-center gap-3">
+          <span className="w-4 h-4 rounded-full bg-[#D4A373] animate-pulse"></span> 待審核名單 ({pendingRegs.length})
+        </h3>
+        <div className="space-y-4">
+          {pendingRegs.length === 0 && <p className="text-gray-500 text-lg">目前無待審核資料。</p>}
+          {pendingRegs.map(reg => (
+            <AdminCard key={reg.id} reg={reg} onApprove={() => updateStatus(reg.id, 'approved')} onReject={() => updateStatus(reg.id, 'rejected')} usersInfo={usersInfo} />
+          ))}
+        </div>
+      </section>
+
+      <section className="bg-white p-6 sm:p-8 rounded-3xl shadow-sm border-t-8 border-[#4A6451]">
+        <h3 className="text-2xl font-bold text-[#2A3C2F] mb-6">已核准名單 ({approvedRegs.length})</h3>
+        <div className="space-y-4">
+          {approvedRegs.map(reg => (
+            <AdminCard key={reg.id} reg={reg} onReject={() => updateStatus(reg.id, 'rejected')} isApproved={true} usersInfo={usersInfo} />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AdminCard({ reg, onApprove, onReject, isApproved, usersInfo }) {
+  const uInfo = usersInfo.find(u => u.username === reg.username) || {};
+  
+  const generateMessage = () => {
+    let msg = `【嶺頭志工服事通知】\n親愛的 ${reg.mainName} 平安：\n感謝您報名嶺頭志工服事，您的排班已審核通過！\n\n📌 您的排班日期：\n`;
+    reg.shifts.forEach(s => {
+      msg += `- ${s.date} | ${s.type}\n`;
+      if(s.extraVolunteers && s.extraVolunteers.length > 0) msg += `  (同行: ${s.extraVolunteers.join(', ')})\n`;
+    });
+    msg += `\n期待與您一同服事，願神賜福您！🌱`;
+    return msg;
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(generateMessage());
+    alert('已複製提醒文字！');
+  };
+
+  const shareToLine = () => {
+    const url = `https://line.me/R/msg/text/?${encodeURIComponent(generateMessage())}`;
+    window.open(url, '_blank');
+  };
+
+  return (
+    <div className="border-2 border-[#E5E0D8] rounded-2xl p-5 sm:p-6 bg-[#FAF9F6] flex flex-col lg:flex-row justify-between gap-6 hover:border-[#C3DCCB] transition-colors">
+      <div className="flex-1 space-y-4">
+        <div className="flex flex-wrap gap-4 items-center">
+          <span className="font-extrabold text-2xl text-[#2A3C2F]">{reg.mainName}</span>
+          <span className="text-[#5E7459] font-medium bg-[#EAE6D9] px-3 py-1 rounded-lg text-sm sm:text-base">{uInfo.church || '未知教會'} / {uInfo.alliance || '未知聯盟'}</span>
+        </div>
+        <div className="text-[#7A8675] font-medium flex flex-col sm:flex-row gap-2 sm:gap-6">
+          <span>📞 {uInfo.phone || '無電話'}</span>
+          <span>LINE: {uInfo.lineId || '無LINE'}</span>
+        </div>
+        
+        <div className="bg-white p-4 rounded-xl border border-[#E5E0D8]">
+          <h4 className="font-bold text-[#4A6451] mb-2 border-b border-[#E5E0D8] pb-1">排班時段</h4>
+          <ul className="space-y-2">
+            {reg.shifts.map((s, i) => (
+              <li key={i} className="text-base sm:text-lg text-[#2A3C2F] font-bold flex flex-col sm:flex-row sm:items-center gap-1">
+                {s.date} <span className="text-[#5C6656] font-medium sm:ml-2">{s.type}</span>
+                {s.extraVolunteers && s.extraVolunteers.length > 0 && <span className="text-[#A3B18A] text-sm sm:ml-2">(同行: {s.extraVolunteers.join(', ')})</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 lg:w-48 justify-center border-t lg:border-t-0 lg:border-l border-[#E5E0D8] pt-4 lg:pt-0 lg:pl-6">
+        {!isApproved ? (
+          <>
+            <button onClick={onApprove} className="w-full bg-[#4A6451] hover:bg-[#3A4D42] text-white px-4 py-3 rounded-xl font-bold text-base sm:text-lg flex justify-center items-center gap-2">
+              <Check className="w-5 h-5"/> 核准
+            </button>
+            <button onClick={onReject} className="w-full bg-[#FDF6F5] hover:bg-[#F9E8E6] text-[#8C3A3A] border-2 border-[#EAD5D3] px-4 py-3 rounded-xl font-bold text-base sm:text-lg flex justify-center items-center gap-2">
+              <X className="w-5 h-5"/> 退回
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={copyToClipboard} className="w-full bg-[#EAE6D9] hover:bg-[#D5D0C5] text-[#2A3C2F] px-4 py-3 rounded-xl font-bold flex justify-center items-center gap-2">
+              <ClipboardCopy className="w-5 h-5"/> 複製提醒文
+            </button>
+            <button onClick={shareToLine} className="w-full bg-[#00B900] hover:bg-[#009900] text-white px-4 py-3 rounded-xl font-bold flex justify-center items-center gap-2">
+              <Send className="w-5 h-5"/> 傳送至 LINE
+            </button>
+            <button onClick={onReject} className="w-full mt-4 text-[#8C3A3A] hover:underline font-bold text-sm">
+              撤銷核准
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
